@@ -109,7 +109,7 @@ def main():
                         if price == "Ongoing project" or "Complex project":
                               price = "Not Sure"
                     proposal = soup.find(class_='value').text
-                    jobs[title] = clean_text,link,price,proposal
+                    jobs[title] = clean_text,link,proposal,price
                 except Exception as e:
                     print(e)
         telegram(jobs)
