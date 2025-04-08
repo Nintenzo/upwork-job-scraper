@@ -1,0 +1,4 @@
+cloudscraper
+python-dotenv
+requests
+beautifulsoup4
