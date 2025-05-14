@@ -9,7 +9,7 @@ import hashlib
 import json
 import subprocess
 import os
-
+from job_fetcher import get_jobs
 load_dotenv()
 
 scraper = cloudscraper.create_scraper()
@@ -23,7 +23,6 @@ DESCRIPTIONS_FILE = "descriptions.json"
 job_descriptions = {}
 jobset = set()
 
-# --- Load descriptions from file ---
 def load_descriptions():
 	global job_descriptions
 	if os.path.exists(DESCRIPTIONS_FILE):
@@ -35,19 +34,15 @@ def load_descriptions():
 	else:
 		job_descriptions = {}
 
-# --- Save descriptions to file ---
-# --- Save descriptions to file ---  
 def save_descriptions():
-    # Check if job_descriptions has exceeded 5000 entries
     if len(job_descriptions) >= 5000:
         print("Job descriptions limit reached, clearing the file.")
-        job_descriptions.clear()  # Clear the job descriptions if limit is reached
+        job_descriptions.clear()
         
     with open(DESCRIPTIONS_FILE, "w", encoding="utf-8") as f:
         json.dump(job_descriptions, f, ensure_ascii=False, indent=2)
 
 
-# --- Optional Warp VPN switch ---
 def run_warp():
 	subprocess.run(["warp-cli", "disconnect"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 	subprocess.run(["warp-cli", "connect"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)   
@@ -59,11 +54,10 @@ def run_warp():
 		time.sleep(1)
 run_warp()
 
-# --- Handle callback queries ---
 def handle_callback():
     global TOKEN
     url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
-    processed = set()  # Initialize this inside the function to avoid shared state
+    processed = set()
 	
     while True:
         try:
@@ -99,7 +93,6 @@ def handle_callback():
             time.sleep(3)
 
 
-# --- Send job message to Telegram ---
 def telegram(message=None):
 	global TOKEN, CHAT_ID
 	if not message:
@@ -113,6 +106,7 @@ def telegram(message=None):
 			caption = (
 				f"📌 <b>{title}</b>\n"
 				f"💼 <b>{job[3].strip()}</b>: {job[4].strip()}\n"
+				f"✍️ <b>Proposal</b>: {job[7].strip()}\n"
 				f"⚙️ <b>{job[5].strip()}</b>: {job[6].strip()}\n"
 				f"📎 <a href='{job[1]}'>Job Link</a>"
 			)
@@ -136,91 +130,57 @@ def telegram(message=None):
 	except Exception as e:
 		print(f"Error occurred: {e}")
 
-# --- Get initial last job ---
 def last():
 	global old_job
-	response = scraper.get(url)
-	if response.status_code in ["403","429","400"]:
+	try:
 		run_warp()
-		response = scraper.get(url)
-	soup = BeautifulSoup(response.text, "html.parser")
-	old_job = soup.find('h2', class_='h5 mb-0 mr-2 job-tile-title').text
-	print("Initial last job:", old_job)
+		jobs = get_jobs()
+		old_job = jobs[0].get('title')
+		print("Initial last job:", old_job)
+	except Exception as e:
+		run_warp()
+		print(f"Error occurred: {e}")
 
-# --- Scrape job details ---
-def scrapy(soup):
+def scrapy():
 	global old_job, jobset
 	jobs = {}
-	job = soup.find_all('h2', class_='h5 mb-0 mr-2 job-tile-title')
-	last_job = soup.find('h2', class_='h5 mb-0 mr-2 job-tile-title').text
-	for x in job:
-		a_tag = x.find('a')
-		if a_tag:
-			try:
-				title = a_tag.text.strip()
-				if title == old_job:
-					old_job = last_job
-					time.sleep(120)
-					break
-				link = 'https://upwork.com' + a_tag['href']
-				if link in jobset:
-					continue
-
-				response = scraper.get(link)
-				if response.status_code in ["403","429","400"]:
-					run_warp()
-					response = scraper.get(url)
-				soup = BeautifulSoup(response.text, "html.parser")
-				text = soup.find('div', class_='break mt-2').text
-				clean_text = re.sub(r'\s+', ' ', text).strip()
-
-				price = "Not specified"
-				experience = "Not specified"
-				experience_text = "Not specified"
-				price_text = "Not specified"
-				price_elements = soup.find_all(class_='description')
-				for elm in price_elements:
-					pricecheck = elm.find_previous_sibling().get_text(strip=True)
-					if pricecheck.startswith("$"):
-						price_text = elm.text
-						price = pricecheck
-						break
-				for elm in price_elements:
-					experiencecheck = elm.get_text(strip=True)
-					if experiencecheck == "Experience Level":
-						experience = elm.find_previous_sibling().get_text(strip=True)
-						experience_text = elm.text
-						break
-
-				proposal_element = soup.find(class_='value')
-				proposal = proposal_element.text if proposal_element else "Not specified"
-
-				jobset.add(link)
-				jobs[title] = clean_text, link, proposal, price_text, price, experience_text, experience, proposal
-			except Exception as e:
-				print("Error parsing job:", e)
+	job_elements = get_jobs()
+	last_job = job_elements[0].get('title') if job_elements else old_job
+	for x in job_elements:
+		price_text = x.get('type')
+		experience_text = "Experience Level"
+		experience = x.get('experience_level')
+		price = x.get('price')
+		title = x.get('title')
+		link = x.get('link')
+		clean_text = x.get('description')
+		proposal = 'Less than 5'
+		try:
+			if title == old_job:
+				old_job = last_job
+				time.sleep(120)
+				break
+			if link in jobset:
+				continue
+			jobset.add(link)
+			jobs[title] = clean_text, link, proposal, price_text, price, experience_text, experience, proposal
+		except Exception as e:
+			print("Error parsing job:", e)
 	old_job = last_job
 	return jobs
 
-# --- Main scraping loop ---
 def main():
 	global jobset
 	while True:
 		try:
 			if len(jobset) >= 100:
 				jobset.clear()
-			response = scraper.get(url)
-			if response.status_code in ["403","429","400"]:
-				run_warp()
-				response = scraper.get(url)
-			soup = BeautifulSoup(response.text, "html.parser")
-			data = scrapy(soup)
+			data = scrapy()
 			telegram(data)
 		except Exception as e:
 			print("Main loop error:", e)
 		time.sleep(2)
 
-# --- Entry Point ---
 if __name__ == "__main__":
 	load_descriptions()
 	last()
