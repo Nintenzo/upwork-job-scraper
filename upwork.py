@@ -1,8 +1,6 @@
 import cloudscraper
 from dotenv import load_dotenv
 import requests
-from bs4 import BeautifulSoup
-import re
 import time
 import threading
 import hashlib
